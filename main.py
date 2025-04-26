@@ -1,46 +1,57 @@
-import argparse, queue, time
+import argparse, queue, sys, time, pyshark
 from config       import SAMPLE_DURATION
 from capture      import CSICapture
-from inject       import send_ftm_burst
-from rtt          import ftm_distance
-from csi_parser   import aoa_from_csi
-from pointcloud   import build_pointcloud
+from csi_parser   import aoa_from_pkt
+from cir_distance import cir_distance
+from pointcloud   import build_cloud
 from visualize    import show_pointcloud
 
-def run(iface: str, seconds: int):
-    q = queue.Queue(maxsize=4096)
-    cap = CSICapture(iface, q)
+def run_live(iface, seconds):
+    q = queue.Queue()
+    cap = CSICapture(q, iface)
     cap.start()
+    collect(q, seconds)
+    cap.stop()
 
-    start = time.time()
-    distances, angles = [], []
+def run_stdin():
+    q = queue.Queue()
+    pkts = pyshark.FileCapture(stdin=True, keep_packets=False, use_json=True)
+    for p in pkts:
+        q.put(p.get_raw_packet())
+    collect(q, None)
 
-    try:
-        while time.time() - start < seconds:
-            # --- Active measurement burst every 0.5 s
-            send_ftm_burst(iface)
-
-            # --- Wait for a matching FTM response + CSI sample
-            pkt = q.get(timeout=2)
-            if pkt.type == 0 and pkt.subtype == 13:      # action frame
-                # (Illustrative!) your driver may expose nanosec timestamps as pkt.time_ns
-                t1, t2, t3, t4 = pkt.time_ns, pkt.time_ns+10, pkt.time_ns+20, pkt.time_ns+30
-                d = ftm_distance(t1, t2, t3, t4)
-                distances.append(d)
-
-            if hasattr(pkt, "csi"):                      # driver-specific attr
-                theta = aoa_from_csi(pkt.csi)
-                angles.append(theta)
-
-    finally:
-        cap.stop()
-
-    cloud = build_pointcloud(distances, angles)
-    print(f"[+] Collected {cloud.shape[0]} points")
+def collect(q, seconds):
+    t0 = time.time()
+    ds, as_ = [], []
+    while seconds is None or time.time() - t0 < seconds:
+        try:
+            pkt = q.get(timeout=1)
+        except queue.Empty:
+            continue
+        res = aoa_from_pkt(pkt)
+        if res is None:
+            continue
+        ang, csi = res
+        dist = cir_distance(csi)
+        if dist is None:
+            continue
+        ds.append(dist)
+        as_.append(ang)
+    cloud = build_cloud(ds, as_)
+    print(f"Points: {len(cloud)}")
     show_pointcloud(cloud)
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--iface",   required=True, help="monitor-mode interface (e.g. wlan0mon)")
+    ap.add_argument("--iface", help="monitor-mode interface (e.g. wlan0mon)")
+    ap.add_argument("--stdin", action="store_true",
+                    help="read pcap stream from stdin instead of live iface")
     ap.add_argument("--seconds", type=int, default=SAMPLE_DURATION)
-    run(**vars(ap.parse_args()))
+    args = ap.parse_args()
+
+    if args.stdin:
+        run_stdin()
+    elif args.iface:
+        run_live(args.iface, args.seconds)
+    else:
+        print("Use --iface <iface> OR --stdin", file=sys.stderr)

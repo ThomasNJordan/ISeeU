@@ -1,16 +1,20 @@
 import numpy as np
-from CSIKit import read_pcap
+from csi_fallback import parse_csi_radiotap
+from config import ANTENNA_SPACING, CENTER_FREQUENCY
 
-def aoa_from_csi(csi_mat, d=0.03, f=5.18e9):
+def aoa_from_pkt(pkt) -> float | None:
     """
-    Simple Bartlett beamformer on a 2-antenna array → AoA estimate.
-    csi_mat shape: (subcarriers, rx_antennas)
+    Bartlett beam-form on CSI ⇒ azimuth θ (deg).  Needs ≥2 RX chains.
     """
-    wavelength = 3e8 / f
-    steering_angles = np.linspace(-90, 90, 181)
-    responses = []
-    for theta in steering_angles:
-        a = np.exp(-1j*2*np.pi*d*np.sin(np.deg2rad(theta))/wavelength*np.arange(csi_mat.shape[1]))
-        power = np.abs((csi_mat @ a.conj().T)**2).sum()
-        responses.append(power)
-    return steering_angles[int(np.argmax(responses))]
+    csi = parse_csi_radiotap(pkt)
+    if csi is None or csi.shape[1] < 2:
+        return None
+
+    lamb  = 3e8 / CENTER_FREQUENCY
+    theta = np.linspace(-90, 90, 181)
+    pwr   = []
+    for ang in theta:
+        a = np.exp(-1j*2*np.pi*ANTENNA_SPACING*np.sin(np.deg2rad(ang))/lamb
+                   * np.arange(csi.shape[1]))
+        pwr.append(np.abs((csi @ a.conj().T)**2).sum())
+    return float(theta[int(np.argmax(pwr))]), csi   # return csi for CIR

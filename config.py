@@ -1,13 +1,15 @@
-# Radio / environment settings
-CHANNEL          = 36          # 5 GHz band gives 80 MHz BW for finer delay resolution
-CENTER_FREQUENCY = 5_180_000_000  # Hz
-SAMPLE_DURATION  = 10          # seconds
+# ---------- Radio / geometry -------------------------------------------------
+CHANNEL           = 36                   # 5 GHz
+CENTER_FREQUENCY  = 5_180_000_000        # Hz
+ANTENNA_SPACING   = 0.05                 # ≈5 cm between WDR4300 antennas
 
-# FTM parameters (IEEE 802.11-2016, Table 11-10ai)
-FTM_TX_RATE      = 10          # Hz
-FTM_BURST_SIZE   = 8           # # frames per burst
+# ---------- Capture ----------------------------------------------------------
+SAMPLE_DURATION   = 10                   # seconds of data to collect
+PCAP_BUFSIZE      = 4096                 # bytes | tcpdump -s <N>
 
-# Geometry (you = origin, AP somewhere in front)
-AP_MAC           = "02:11:22:33:44:55"   # your own AP in FTM responder mode
-ANTENNA_SPACING  = 0.03        # 3 cm, roughly λ/2 @ 5 GHz
-SPEED_OF_LIGHT   = 299_792_458 # m s⁻¹
+# ---------- Distance via CIR -----------------------------------------------
+SPEED_OF_LIGHT    = 299_792_458          # m s⁻¹
+CHANNEL_BW        = 40e6                 # Hz (HT40)
+
+# ---------- Misc -------------------------------------------------------------
+AP_MAC            = "C0:4A:00:DE:AD:BE"  # router’s BSSID
