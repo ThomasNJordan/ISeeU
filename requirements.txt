@@ -1,7 +1,4 @@
-numpy
-scipy
-scapy
-csikit          # pip install git+https://github.com/Gi-z/CSIKit.git
-matplotlib
-open3d
-pyshark         # alternative pcap reader
+# Minimal third-party libraries we need
+numpy       # vectorised math, FFT, beam-forming
+scapy       # live packet capture in monitor mode
+pyshark     # convenient PCAP reader for stdin streams
