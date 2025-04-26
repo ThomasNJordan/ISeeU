@@ -1,0 +1,7 @@
+numpy
+scipy
+scapy
+csikit          # pip install git+https://github.com/Gi-z/CSIKit.git
+matplotlib
+open3d
+pyshark         # alternative pcap reader
