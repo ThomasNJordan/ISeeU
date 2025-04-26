@@ -21,7 +21,7 @@ import numpy as np, struct
 IWL_HDR = struct.Struct("<IIIIHHB")    # fixed part of iwl_internal_csi_hdr
 def _intel(buf: bytes):
     """
-    Intel format = header (28 B) + antenna flags (2 B) + 30×3 complex int16
+    Intel format = header (28 B) + antenna flags (2 B) + 30x3 complex int16
     We ignore the metadata—just unpack the IQ pairs.
     """
     off = IWL_HDR.size + 2
@@ -33,7 +33,7 @@ def _intel(buf: bytes):
 # ------------------------------------------------------------------ Nexmon CSI
 def _nexmon(buf: bytes):
     """
-    Nexmon embeds floats:   header(20 B) then subcarriers × (real, imag) float32.
+    Nexmon embeds floats:   header(20 B) then subcarriers x (real, imag) float32.
     """
     n_sc = int.from_bytes(buf[18:20], "little")
     data = np.frombuffer(buf, "<f4", offset=20, count=n_sc * 2)

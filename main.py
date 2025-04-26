@@ -24,7 +24,7 @@ def aoa_bartlett(csi, d=ANTENNA_SPACING, f=CENTER_FREQUENCY):
     """
     Classical Bartlett beam-former:
       • Assume Uniform Linear Array with spacing `d`
-      • Sweep −90° … +90° in 1° steps
+      • Sweep -90° … +90° in 1° steps
       • Return the angle whose steering vector maximises output power
 
     Parameters
