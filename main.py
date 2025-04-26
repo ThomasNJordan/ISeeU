@@ -1,129 +1,126 @@
 """
-Live or streamed demo that prints:
-    AoA  (degrees)   and   Range  (metres)
-for every 802.11 packet that contains CSI.
+AoA + range estimation from a pcap file produced by **airodump-ng**.
 
-Usage examples
---------------
-# 1. Sniff with a local NIC already in monitor mode
-sudo airmon-ng start wlan0          # → wlan0mon
-python main.py --iface wlan0mon
+Usage
+-----
+# 1. Live pcap tail (router or same PC)
+airodump-ng wlan0mon --output-format pcap --write /tmp/csi_capture
 
-# 2. Read a PCAP stream from stdin (e.g. coming over netcat)
-tcpdump -i wlan0 -I -s 4096 -U -w - | nc … | python main.py
+# 2. Run this script on the pcap file
+python main.py --pcap /tmp/csi_capture-01.cap
+
+# Optional: still supports --iface <wlan0mon> for live sniff
 """
-import argparse, sys, queue, time, numpy as np, pyshark
+from __future__ import annotations
+import argparse, sys, queue, numpy as np, pyshark, pathlib, time
 from scapy.all import sniff, RadioTap
 
-from config import (CENTER_FREQUENCY, ANTENNA_SPACING,
-                    CHANNEL_BW, SPEED_OF_LIGHT)
+from config import (
+    CENTER_FREQUENCY,
+    ANTENNA_SPACING,
+    CHANNEL_BW,
+    SPEED_OF_LIGHT,
+)
 from csi_fallback import parse_csi
 
-# ───────────────────────────── DSP helpers ──────────────────────────────────
-def aoa_bartlett(csi, d=ANTENNA_SPACING, f=CENTER_FREQUENCY):
-    """
-    Classical Bartlett beam-former:
-      • Assume Uniform Linear Array with spacing `d`
-      • Sweep -90° … +90° in 1° steps
-      • Return the angle whose steering vector maximises output power
-
-    Parameters
-    ----------
-    csi : ndarray  (subcarriers, N_rx)
-    d   : float    antenna spacing (m)
-    f   : float    carrier frequency (Hz)
-
-    Returns
-    -------
-    float or None : AoA in degrees, or None if <2 RX chains.
-    """
-    if csi.shape[1] < 2:               # need phase diff between chains
+# ── DSP helpers (unchanged) ─────────────────────────────────────────────────
+def estimate_aoa(csi_matrix: np.ndarray,
+                 antenna_spacing_m: float = ANTENNA_SPACING,
+                 carrier_freq_hz: float = CENTER_FREQUENCY) -> float | None:
+    num_rx = csi_matrix.shape[1]
+    if num_rx < 2:
         return None
-    lamb = 3e8 / f
-    thetas = np.linspace(-90, 90, 181)
-    power = []
-    for th in thetas:
-        steering = np.exp(
-            -1j * 2 * np.pi * d * np.sin(np.deg2rad(th)) / lamb
-            * np.arange(csi.shape[1])
+    wavelength_m      = 3e8 / carrier_freq_hz
+    angle_grid_deg    = np.linspace(-90, 90, 181)      # 1° steps
+    power_along_grid  = []
+    for angle_deg in angle_grid_deg:
+        steering_vec = np.exp(
+            -1j * 2 * np.pi * antenna_spacing_m
+            * np.sin(np.deg2rad(angle_deg)) / wavelength_m
+            * np.arange(num_rx)
         )
-        power.append(np.abs((csi @ steering.conj().T)**2).sum())
-    return float(thetas[int(np.argmax(power))])
+        projected_power = np.abs((csi_matrix @ steering_vec.conj().T) ** 2).sum()
+        power_along_grid.append(projected_power)
+    return float(angle_grid_deg[int(np.argmax(power_along_grid))])
 
-def range_from_cir(csi, bw=CHANNEL_BW):
-    """
-    Coarse ranging via Channel Impulse Response (IFFT of averaged CSI).
+def estimate_distance(csi_matrix: np.ndarray,
+                      channel_bw_hz: float = CHANNEL_BW) -> float:
+    freq_response     = csi_matrix.mean(axis=1)
+    impulse_response  = np.fft.ifft(freq_response)
+    first_path_index  = int(np.argmax(np.abs(impulse_response)))
+    delay_seconds     = first_path_index / channel_bw_hz
+    return 0.5 * SPEED_OF_LIGHT * delay_seconds
 
-    Steps
-    -----
-    1. Average across RX chains → 1-D frequency response H(f)
-    2. IFFT → h(τ)   (power vs. delay)
-    3. Pick first significant peak index → delay_bin * (1/BW)
-    4. Convert delay to distance (round-trip / 2)
+# ── Packet generators ───────────────────────────────────────────────────────
+def generate_packets_live(interface_name: str):
+    """
+    Yield scapy packets from a live monitor-mode interface.
+    """
+    packet_queue: queue.Queue = queue.Queue()
 
-    Caveat: resolution = 1/BW (25 ns ≈ 7.5 m for 40 MHz).  Good enough for
-    *demo* but not sub-metre accuracy.
-    """
-    h = np.fft.ifft(csi.mean(axis=1))
-    idx = np.argmax(np.abs(h))         # first path peak
-    delay = idx / bw                   # seconds
-    return 0.5 * SPEED_OF_LIGHT * delay
-
-# ───────────────────────────── Capture back-ends ────────────────────────────
-def pkt_iter_live(iface):
-    """
-    Generator yielding scapy packets from a live monitor-mode interface.
-    """
-    q = queue.Queue()
-    sniff(iface=iface, store=False, prn=q.put,   # every pkt → queue
-          stop_filter=lambda *_: False,          # run until Ctrl-C
-          monitor=True)                          # ensure Radiotap
+    sniff(iface=interface_name,
+          store=False,
+          monitor=True,
+          prn=packet_queue.put,
+          stop_filter=lambda *_: False)
     while True:
-        yield q.get()
+        yield packet_queue.get()
 
-def pkt_iter_stdin():
+def generate_packets_pcap(pcap_path: pathlib.Path):
     """
-    Generator yielding scapy packets read from stdin PCAP stream via pyshark.
+    Yield packets as they are appended to <pcap_path>.
+    pyshark with follow=True keeps the file open and
+    delivers new frames almost instantly.
     """
-    cap = pyshark.FileCapture(stdin=True, keep_packets=False, use_json=True)
-    for p in cap:
-        yield p.get_raw_packet()
+    capture = pyshark.FileCapture(
+        str(pcap_path),
+        keep_packets=False,
+        follow=True,            # <- tail -F
+        use_json=True
+    )
+    for pkt in capture:
+        yield pkt.get_raw_packet()
 
-# ───────────────────────────── Main processing loop ─────────────────────────
-def process(pkt_iter):
+# ── Core processing loop ────────────────────────────────────────────────────
+def process(packet_iterator):
     """
-    Consume packets, compute AoA + distance if CSI present, print result.
+    Consume packets, compute AoA & distance if CSI present, print results.
     """
-    for pkt in pkt_iter:
-        if not pkt.haslayer(RadioTap):
+    for packet in packet_iterator:
+        if not packet.haslayer(RadioTap):
             continue
-
-        csi = parse_csi(pkt)
-        if csi is None:
-            continue                   # not a CSI-carrying frame
-
-        theta = aoa_bartlett(csi)
-        dist  = range_from_cir(csi)
-
-        if theta is None or dist is None:
+        csi_matrix = parse_csi(packet)
+        if csi_matrix is None:
             continue
-        # Pretty-print, overwrite same line to keep console clean
-        print(f"AoA: {theta:+6.1f}°,  Range: {dist:6.2f} m", end="\r",
-              flush=True)
+        angle_deg   = estimate_aoa(csi_matrix)
+        distance_m  = estimate_distance(csi_matrix)
+        if angle_deg is None:
+            continue
+        print(f"AoA {angle_deg:+6.1f}°   Range {distance_m:6.2f} m",
+              end="\r", flush=True)
 
-# ────────────────────────────── CLI entry point ─────────────────────────────
+# ── CLI entry point ─────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--iface", help="monitor-mode interface (e.g. wlan0mon)")
-    args = ap.parse_args()
+    cli = argparse.ArgumentParser()
+    cli.add_argument("--pcap",  type=pathlib.Path,
+                     help="Path to airodump-ng .cap file (tail in real-time)")
+    cli.add_argument("--iface",
+                     help="Alternative: live monitor-mode interface name")
+    args = cli.parse_args()
 
     try:
-        if args.iface:
-            print("⟲ Live sniffing …  Ctrl-C to stop")
-            process(pkt_iter_live(args.iface))
+        if args.pcap:
+            if not args.pcap.exists():
+                print("Waiting for pcap file to appear …")
+                while not args.pcap.exists():
+                    time.sleep(0.5)
+            print(f"⟲ Tailing {args.pcap}  (Ctrl-C to stop)")
+            process(generate_packets_pcap(args.pcap))
+        elif args.iface:
+            print("⟲ Live sniffing interface …  Ctrl-C to stop")
+            process(generate_packets_live(args.iface))
         else:
-            print("⟲ Reading packets from stdin …")
-            process(pkt_iter_stdin())
+            cli.error("Provide either --pcap <file> or --iface <intf>")
     except KeyboardInterrupt:
-        print("\nDone.")
+        print("\nStopped by user.")
         sys.exit(0)
