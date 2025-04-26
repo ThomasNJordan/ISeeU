@@ -1,18 +1,17 @@
 """
-AoA + range estimation from a pcap file produced by **airodump-ng**.
+Compute AoA + distance from a pcap that airodump-ng is writing,
+and append each result as a JSON object to <output.json>.
 
-Usage
------
-# 1. Live pcap tail (router or same PC)
-airodump-ng wlan0mon --output-format pcap --write /tmp/csi_capture
+Run:
+    # 1) Capture on router or PC
+    airodump-ng wlan0mon --output-format pcap --write /tmp/csi_capture
 
-# 2. Run this script on the pcap file
-python main.py --pcap /tmp/csi_capture-01.cap
-
-# Optional: still supports --iface <wlan0mon> for live sniff
+    # 2) Analyse on the same or another PC
+    python main.py --pcap /tmp/csi_capture-01.cap --json aoa_range.json
 """
 from __future__ import annotations
-import argparse, sys, queue, numpy as np, pyshark, pathlib, time
+import argparse, sys, queue, time, json, datetime as dt, pathlib, numpy as np
+import pyshark
 from scapy.all import sniff, RadioTap
 
 from config import (
@@ -27,85 +26,85 @@ from csi_fallback import parse_csi
 def estimate_aoa(csi_matrix: np.ndarray,
                  antenna_spacing_m: float = ANTENNA_SPACING,
                  carrier_freq_hz: float = CENTER_FREQUENCY) -> float | None:
+    """Bartlett beam-forming scan (−90°..+90° in 1° steps)."""
     num_rx = csi_matrix.shape[1]
     if num_rx < 2:
         return None
     wavelength_m      = 3e8 / carrier_freq_hz
-    angle_grid_deg    = np.linspace(-90, 90, 181)      # 1° steps
-    power_along_grid  = []
-    for angle_deg in angle_grid_deg:
-        steering_vec = np.exp(
+    angles_deg        = np.linspace(-90, 90, 181)
+    powers            = []
+    for angle in angles_deg:
+        steering = np.exp(
             -1j * 2 * np.pi * antenna_spacing_m
-            * np.sin(np.deg2rad(angle_deg)) / wavelength_m
+            * np.sin(np.deg2rad(angle)) / wavelength_m
             * np.arange(num_rx)
         )
-        projected_power = np.abs((csi_matrix @ steering_vec.conj().T) ** 2).sum()
-        power_along_grid.append(projected_power)
-    return float(angle_grid_deg[int(np.argmax(power_along_grid))])
+        powers.append(np.abs((csi_matrix @ steering.conj().T) ** 2).sum())
+    return float(angles_deg[int(np.argmax(powers))])
 
 def estimate_distance(csi_matrix: np.ndarray,
                       channel_bw_hz: float = CHANNEL_BW) -> float:
-    freq_response     = csi_matrix.mean(axis=1)
-    impulse_response  = np.fft.ifft(freq_response)
-    first_path_index  = int(np.argmax(np.abs(impulse_response)))
-    delay_seconds     = first_path_index / channel_bw_hz
-    return 0.5 * SPEED_OF_LIGHT * delay_seconds
+    """First peak of CIR → coarse propagation delay → distance."""
+    freq_response    = csi_matrix.mean(axis=1)
+    impulse_response = np.fft.ifft(freq_response)
+    first_peak_idx   = int(np.argmax(np.abs(impulse_response)))
+    delay_s          = first_peak_idx / channel_bw_hz
+    return 0.5 * SPEED_OF_LIGHT * delay_s
 
 # ── Packet generators ───────────────────────────────────────────────────────
-def generate_packets_live(interface_name: str):
+def packets_from_pcap_live(pcap_path: pathlib.Path):
     """
-    Yield scapy packets from a live monitor-mode interface.
-    """
-    packet_queue: queue.Queue = queue.Queue()
-
-    sniff(iface=interface_name,
-          store=False,
-          monitor=True,
-          prn=packet_queue.put,
-          stop_filter=lambda *_: False)
-    while True:
-        yield packet_queue.get()
-
-def generate_packets_pcap(pcap_path: pathlib.Path):
-    """
-    Yield packets as they are appended to <pcap_path>.
-    pyshark with follow=True keeps the file open and
-    delivers new frames almost instantly.
+    Tail a growing pcap file (airodump-ng) and yield scapy packets as they land.
     """
     capture = pyshark.FileCapture(
-        str(pcap_path),
-        keep_packets=False,
-        follow=True,            # <- tail -F
-        use_json=True
+        str(pcap_path), keep_packets=False, follow=True, use_json=True
     )
     for pkt in capture:
         yield pkt.get_raw_packet()
 
+def packets_from_interface(interface_name: str):
+    """Fallback: yield packets from a live monitor-mode NIC on this PC."""
+    pkt_queue: queue.Queue = queue.Queue()
+    sniff(iface=interface_name,
+          store=False, monitor=True, prn=pkt_queue.put,
+          stop_filter=lambda *_: False)
+    while True:
+        yield pkt_queue.get()
+
 # ── Core processing loop ────────────────────────────────────────────────────
-def process(packet_iterator):
+def analyse(packet_iterator, json_path: pathlib.Path):
     """
-    Consume packets, compute AoA & distance if CSI present, print results.
+    Compute AoA + distance for every CSI packet and append it to <json_path>.
     """
-    for packet in packet_iterator:
-        if not packet.haslayer(RadioTap):
-            continue
-        csi_matrix = parse_csi(packet)
-        if csi_matrix is None:
-            continue
-        angle_deg   = estimate_aoa(csi_matrix)
-        distance_m  = estimate_distance(csi_matrix)
-        if angle_deg is None:
-            continue
-        print(f"AoA {angle_deg:+6.1f}°   Range {distance_m:6.2f} m",
-              end="\r", flush=True)
+    with json_path.open("a", encoding="utf-8") as json_file:   # append mode
+        for packet in packet_iterator:
+            if not packet.haslayer(RadioTap):
+                continue
+            csi_matrix = parse_csi(packet)
+            if csi_matrix is None:
+                continue
+            angle_deg   = estimate_aoa(csi_matrix)
+            distance_m  = estimate_distance(csi_matrix)
+            if angle_deg is None:
+                continue   # single-antenna packets, etc.
+
+            record = {
+                "timestamp"  : dt.datetime.utcnow().isoformat(timespec="milliseconds") + "Z",
+                "angle_deg"  : round(angle_deg, 1),
+                "distance_m" : round(distance_m, 3)
+            }
+            json_file.write(json.dumps(record) + "\n")
+            json_file.flush()            # ensure real-time updates
 
 # ── CLI entry point ─────────────────────────────────────────────────────────
 if __name__ == "__main__":
     cli = argparse.ArgumentParser()
     cli.add_argument("--pcap",  type=pathlib.Path,
-                     help="Path to airodump-ng .cap file (tail in real-time)")
+                     help="Path to airodump-ng .cap file (tailed live)")
     cli.add_argument("--iface",
-                     help="Alternative: live monitor-mode interface name")
+                     help="Alternative: live monitor-mode interface")
+    cli.add_argument("--json",  type=pathlib.Path, default="aoa_range.json",
+                     help="Output NDJSON file (default: aoa_range.json)")
     args = cli.parse_args()
 
     try:
@@ -114,11 +113,11 @@ if __name__ == "__main__":
                 print("Waiting for pcap file to appear …")
                 while not args.pcap.exists():
                     time.sleep(0.5)
-            print(f"⟲ Tailing {args.pcap}  (Ctrl-C to stop)")
-            process(generate_packets_pcap(args.pcap))
+            print(f"⟲ Tailing {args.pcap}  →  {args.json}   Ctrl-C to stop")
+            analyse(packets_from_pcap_live(args.pcap), args.json)
         elif args.iface:
-            print("⟲ Live sniffing interface …  Ctrl-C to stop")
-            process(generate_packets_live(args.iface))
+            print(f"⟲ Live sniff {args.iface}  →  {args.json}   Ctrl-C to stop")
+            analyse(packets_from_interface(args.iface), args.json)
         else:
             cli.error("Provide either --pcap <file> or --iface <intf>")
     except KeyboardInterrupt:
