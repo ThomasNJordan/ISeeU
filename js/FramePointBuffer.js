@@ -1,6 +1,6 @@
 import { Point } from "./Point";
 
-export class FramePointBuffer {
+class FramePointBuffer {
     scene;
     points;
 
@@ -22,13 +22,6 @@ export class FramePointBuffer {
             point.render(this.scene);
         }
         this.points = this.points.filter(point => !point.isDead());
-    }
-
-    generateTestPoints() {
-        for (let i = 0; i < 3; i++) {
-            const distance = Math.random() * 20;
-            this.addPoint(distance);
-        }
     }
 }
 

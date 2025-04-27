@@ -9,14 +9,16 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x202020);
 
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
-camera.position.set(-2.5, 3, 5);
+// camera.position.set(-2.5, 3, 5);
+camera.position.set(4.5, 3, 5);
+camera.rotation.set(-Math.PI/6, 0, 0);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
 
 // Orbit Controls
-const controls = new OrbitControls(camera, renderer.domElement);
+// const controls = new OrbitControls(camera, renderer.domElement);
 
 // Router Model
 const objLoader = new OBJLoader();
@@ -56,10 +58,10 @@ const listener = new ServerListener();
 function animate() {
 	requestAnimationFrame(animate);
 
-	framePointBuffer.generateTestPoints();
+	listener.generateTestPackets();
 	framePointBuffer.flush();
 
-	controls.update();
+	// controls.update();
 	renderer.render(scene, camera);
 }
 animate();

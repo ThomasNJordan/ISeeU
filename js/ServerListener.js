@@ -1,11 +1,13 @@
-import { framePointBuffer } from './FramePointBuffer';
+import { Packets } from './Packets';
 
 const WS_URL = 'ws://localhost:9000';
 
 export class ServerListener {
     socket;
+    packets;
 
     constructor() {
+        this.packets = new Packets();
         this.socket = new WebSocket(WS_URL);
         this.socket.onopen = () => {
             console.log('[+] Connected to WebSocket server');
@@ -22,17 +24,26 @@ export class ServerListener {
     }
 
     onDataReceived(data) {
-        console.log(`[+] Receiving data chunk (${data.length} bytes)`);
-        console.log(`[+] Data chunk: ${data}`);
+        console.log(`[+] Packet: ${data}`);
         try {
-            const point = JSON.parse(data);
-            if (point.theta !== void 0 && point.distance !== void 0) {
-                framePointBuffer.addPoint(point.theta, point.distance);
+            const packetData = JSON.parse(data);
+            if (packetData.distance !== void 0) {
+                this.packets.addPacket(packetData);
             } else {
                 console.error('[-] Invalid data structure:', data.toString());
             }
         } catch (err) {
             console.error('[-] Failed to parse data:', err.message);
+        }
+    }
+
+    generateTestPackets() {
+        for (let i = 0; i < 3; i++) {
+            const distance = Math.random() * 10;
+            this.onDataReceived(JSON.stringify({
+                distance: distance,
+                timestamp: Date.now()
+            }));
         }
     }
 }
