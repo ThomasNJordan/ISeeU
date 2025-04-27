@@ -1,5 +1,6 @@
 import { EMAFilter } from "./EMAFilter";
 import { framePointBuffer } from "./FramePointBuffer";
+import { KalmanFilter } from "./KalmanFilter";
 
 export class Packets {
     constructor() {
@@ -13,6 +14,7 @@ export class Packets {
         const smoothedDistance = this.getNextSmoothedDistance();
         if (smoothedDistance === void 0)
             return;
+        this.currentPacket.distance = smoothedDistance;
         framePointBuffer.addPoint(smoothedDistance);
     }
 

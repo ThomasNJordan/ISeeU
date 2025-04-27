@@ -1,5 +1,5 @@
 export class KalmanFilter {
-    static filter() {
-        
+    static filter(lastPacket, currentPacket) {
+        return 0;
     }
 }
