@@ -58,7 +58,7 @@ const listener = new ServerListener();
 function animate() {
 	requestAnimationFrame(animate);
 
-	listener.generateTestPackets();
+	// listener.generateTestPackets();
 	framePointBuffer.flush();
 
 	// controls.update();

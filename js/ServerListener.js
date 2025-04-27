@@ -1,6 +1,6 @@
 import { Packets } from './Packets';
 
-const WS_URL = 'ws://localhost:9000';
+const WS_URL = 'ws://192.168.1.100:9000';
 
 export class ServerListener {
     socket;
