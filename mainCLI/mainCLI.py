@@ -14,7 +14,7 @@ print(r"""
     
 """)
 
-print("What do you want to do (Type # for Option):\n")                            
+print("What do you want to do (Type Number for Option):\n")                            
 print("1. Start Motion Detection")
 print("2. Enumerate Envrionment")
 print("0. Exit\n")
@@ -28,10 +28,11 @@ except ValueError:
 
 match user_input:
     case 1:
-        print("1. Start with Capture")
-        print("2. Display Only")
+        print("1. Beginning Capture")
+            #Insert Code
     case 2:
         print("Environment Enumerating")
+            #Insert Code
     case _:
         print("Default Reached")
 
