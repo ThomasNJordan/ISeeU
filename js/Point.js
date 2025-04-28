@@ -4,12 +4,12 @@ export class Point {
     constructor(distance) {
         this.distance = distance;
         this.isRendered = false;
-        this.lifetime = 60;
+        this.lifetime = 60*10;
         this.dot = null;
     }
 
     calculateX() {
-        return this.distance;
+        return this.distance / 10;
     }
 
     calculateY() {

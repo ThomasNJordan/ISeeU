@@ -18,14 +18,14 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
 
 // Orbit Controls
-// const controls = new OrbitControls(camera, renderer.domElement);
+const controls = new OrbitControls(camera, renderer.domElement);
 
 // Router Model
 const objLoader = new OBJLoader();
 objLoader.load('../models/router.obj', (object) => {
 	object.scale.set(5, 5, 5);
-	object.position.set(0.25, -0.5, 1.5);
-	object.rotation.set(0, -Math.PI/2, 0);
+	object.position.set(-0.25, -0.5, -1.5);
+	object.rotation.set(0, Math.PI/2, 0);
 	scene.add(object);
 });
 
@@ -61,7 +61,7 @@ function animate() {
 	// listener.generateTestPackets();
 	framePointBuffer.flush();
 
-	// controls.update();
+	controls.update();
 	renderer.render(scene, camera);
 }
 animate();
