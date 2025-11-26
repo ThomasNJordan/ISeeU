@@ -1,8 +1,12 @@
 # ISeeU
-WiFi Post-Exploitation Toolkit for Motion Detection
+[ARCHIVE] PantherHacks Cyber Track Winner 🏆🏆🏆
 
+
+WiFi Post-Exploitation Tool for Motion Detection
 
 ## Inspiration
+Rooted a router? Now what? What if you could literally *see* into a target's physical environment? Introducing ISeeU
+
 The inspiration for the project came from a very cool project from Carnegie Mellon University doing a very similar thing. The main goal was to attempt to utilize Wi-Fi routers to put people in a 3D environment, with near pinpoint accuracy depending on router firmware and ability, and use it as a LIDAR camera. 
 
 ## What it does
